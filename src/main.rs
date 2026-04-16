@@ -2,9 +2,5 @@
 async fn main() {
     println!("Hello, world!");
 
-    start_server().await
-}
-
-async fn start_server() {
-    todo!()
+    //start_server().await
 }

@@ -57,7 +57,7 @@ async fn test_client_successfully_connects_sends_and_receives() -> Result<()> {
         .await?;
 
     let mut res = String::new();
-    // stream.read_to_string(&mut res).await?;
+    stream.read_to_string(&mut res).await?;
 
     assert_eq!(res, "Hello Client!");
 
