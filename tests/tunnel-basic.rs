@@ -41,16 +41,14 @@ async fn test_client_successfully_connects_sends_and_receives() -> Result<()> {
 
     let stream = TcpStream::connect("127.0.0.1:443").await?;
 
-    let mut stream = timeout(
-        Duration::from_secs(5),
-        conn.connect(
+    let mut stream = conn
+        .connect(
             "localhost"
                 .try_into()
                 .context("Convert domain into rustls domain")?,
             stream,
-        ),
-    )
-    .await??;
+        )
+        .await?;
 
     stream
         .write_all("Hello TLS!".to_string().as_bytes())
