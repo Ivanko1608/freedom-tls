@@ -4,6 +4,7 @@ use tokio::net::TcpStream;
 use tokio_rustls::{TlsConnector, rustls::ClientConfig};
 
 pub struct Server {
+    /// Either a domain or an IP address of the FTLS server we are connecting to.
     addr: String,
     client_config: Arc<ClientConfig>,
 }
@@ -16,10 +17,12 @@ impl Server {
         }
     }
 
-    pub async fn send(&self, stream: TcpStream) -> anyhow::Result<()> {
+    pub async fn send(&self, client_stream: TcpStream) -> anyhow::Result<()> {
         let connector = TlsConnector::from(self.client_config.clone());
 
-        // let stream = TcpStream::connect(&addr).await?;
+        let server_stream = TcpStream::connect(&self.addr).await?;
+
+        let mut stream = connector.connect(&self.addr, server_stream).await;
 
         todo!()
     }
