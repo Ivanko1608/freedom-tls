@@ -1,0 +1,26 @@
+[package]
+name = "ftls-client"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "ftls-client"
+path = "src/main.rs"
+
+
+[dependencies]
+tokio = { version = "1.52.0", features = [
+  "net",
+  "io-util",
+  "macros",
+  "rt-multi-thread",
+  "time",
+] }
+tokio-rustls = "0.26.4"
+anyhow = "1.0.102"
+thiserror = "2.0.18"
+webpki-roots = "1.0.7"
+fast-socks5 = "1.0.0"
+clap = { version = "4.6.1", features = ["derive"] }
+[dev-dependencies]
+rcgen = "0.14.7"
