@@ -1,16 +1,15 @@
-use std::sync::Arc;
+use std::{net::SocketAddr, sync::Arc};
 
 use tokio::net::TcpStream;
 use tokio_rustls::{TlsConnector, rustls::ClientConfig};
 
 pub struct Server {
-    /// Either a domain or an IP address of the FTLS server we are connecting to.
-    addr: String,
+    addr: SocketAddr,
     client_config: Arc<ClientConfig>,
 }
 
 impl Server {
-    pub fn new(addr: String, client_config: ClientConfig) -> Self {
+    pub fn new(addr: SocketAddr, client_config: ClientConfig) -> Self {
         Server {
             addr,
             client_config: Arc::new(client_config),
@@ -22,7 +21,9 @@ impl Server {
 
         let server_stream = TcpStream::connect(&self.addr).await?;
 
-        let mut stream = connector.connect(&self.addr, server_stream).await;
+        // let addr = match self.addr {};
+        //
+        // let mut stream = connector.connect(&self.addr, server_stream).await;
 
         todo!()
     }

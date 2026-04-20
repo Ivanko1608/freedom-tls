@@ -1,7 +1,11 @@
-use std::{net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{
+    net::{SocketAddr, ToSocketAddrs},
+    path::PathBuf,
+    sync::Arc,
+};
 
-use anyhow::Result;
-use clap::Parser;
+use anyhow::{Context, Result, anyhow};
+use clap::{Args, Parser};
 use fast_socks5::{Socks5Command, server::Socks5ServerProtocol};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::rustls::{
@@ -13,22 +17,35 @@ use crate::server::Server;
 
 mod server;
 
-#[derive(Parser, Debug)]
-struct Args {
+#[derive(Parser)]
+struct CliArgs {
     /// Socks5 proxy port to send traffic to.
     #[arg(short, long)]
     port: u16,
 
-    #[arg(short, long)]
-    server_addr: String,
+    #[command(flatten)]
+    server_addr: ServerAddressArg,
 
     #[arg(long)]
     server_cert: Option<PathBuf>,
+
+    #[arg(long, conflicts_with = "ip_port")]
+    server_port: Option<u16>,
+}
+
+#[derive(Args)]
+#[group(required = true, multiple = false)]
+struct ServerAddressArg {
+    #[arg(short, long)]
+    ip_port: Option<SocketAddr>,
+
+    #[arg(short, long)]
+    domain: Option<String>,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let args = Args::parse();
+    let args = CliArgs::parse();
 
     let listener = TcpListener::bind(format!("127.0.0.1:{}", args.port)).await?;
 
@@ -45,7 +62,31 @@ async fn main() -> Result<()> {
         .with_root_certificates(root_cert_store)
         .with_no_client_auth();
 
-    let server = Arc::new(Server::new(args.server_addr, config));
+    let server_addr = match (args.server_addr.ip_port, args.server_addr.domain) {
+        (Some(ip), _) => ip,
+        (None, Some(mut domain)) => {
+            if !domain.contains(':') {
+                domain.insert(domain.len(), ':');
+                domain.insert_str(
+                    domain.len(),
+                    &(args.server_port.unwrap_or(443u16)).to_string(),
+                );
+            }
+            domain
+                .to_socket_addrs()
+                .with_context(|| format!("failed to resolve server domain: {domain}"))?
+                .next()
+                .ok_or_else(|| anyhow!("sever domain: {domain} resolved to no addresses"))?
+        }
+        // NOTE: We should do some more data collection and logging in case this case ever happens.
+        _ => panic!(
+            "neither domain or ip from server_addr were Some which is dissallowed by validation and should never happen"
+        ),
+    };
+
+    dbg!(server_addr);
+
+    let server = Arc::new(Server::new(server_addr, config));
 
     loop {
         match listener.accept().await {
