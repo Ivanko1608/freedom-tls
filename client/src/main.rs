@@ -1,11 +1,7 @@
-use std::{
-    net::{SocketAddr, ToSocketAddrs},
-    path::PathBuf,
-    sync::Arc,
-};
+use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 
-use anyhow::{Context, Result, anyhow};
-use clap::{Args, Parser};
+use anyhow::{Context, Result};
+use clap::Parser;
 use fast_socks5::{Socks5Command, server::Socks5ServerProtocol};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::rustls::{
@@ -23,24 +19,17 @@ struct CliArgs {
     #[arg(short, long)]
     port: u16,
 
-    #[command(flatten)]
-    server_addr: ServerAddressArg,
-
     #[arg(long)]
     server_cert: Option<PathBuf>,
 
-    #[arg(long, conflicts_with = "ip_port")]
+    #[arg(short, long, name = "d")]
+    server_domain: String,
+
+    #[arg(long)]
     server_port: Option<u16>,
-}
-
-#[derive(Args)]
-#[group(required = true, multiple = false)]
-struct ServerAddressArg {
-    #[arg(short, long)]
-    ip_port: Option<SocketAddr>,
-
-    #[arg(short, long)]
-    domain: Option<String>,
+    // TODO: Impl server ip override
+    // #[arg(long)]
+    // server_ip: Option<SocketAddr>,
 }
 
 #[tokio::main]
@@ -62,31 +51,14 @@ async fn main() -> Result<()> {
         .with_root_certificates(root_cert_store)
         .with_no_client_auth();
 
-    let server_addr = match (args.server_addr.ip_port, args.server_addr.domain) {
-        (Some(ip), _) => ip,
-        (None, Some(mut domain)) => {
-            if !domain.contains(':') {
-                domain.insert(domain.len(), ':');
-                domain.insert_str(
-                    domain.len(),
-                    &(args.server_port.unwrap_or(443u16)).to_string(),
-                );
-            }
-            domain
-                .to_socket_addrs()
-                .with_context(|| format!("failed to resolve server domain: {domain}"))?
-                .next()
-                .ok_or_else(|| anyhow!("sever domain: {domain} resolved to no addresses"))?
-        }
-        // NOTE: We should do some more data collection and logging in case this case ever happens.
-        _ => panic!(
-            "neither domain or ip from server_addr were Some which is dissallowed by validation and should never happen"
-        ),
-    };
-
-    dbg!(server_addr);
-
-    let server = Arc::new(Server::new(server_addr, config));
+    let server = Arc::new(
+        Server::new(
+            args.server_domain,
+            args.server_port.unwrap_or(443u16),
+            config,
+        )
+        .context("failed to construct server")?,
+    );
 
     loop {
         match listener.accept().await {
@@ -101,7 +73,8 @@ async fn main() -> Result<()> {
                         }
                     };
 
-                    server.send(stream).await;
+                    // FIXME: temp unwrap
+                    server.send(stream).await.unwrap();
                 });
             }
             Err(e) => {
@@ -121,10 +94,9 @@ async fn handle_socks5(
 
     match cmd {
         Socks5Command::TCPConnect => {
-            eprintln!("TCPConnect");
+            println!("Socks5: TCPConnect");
             // target_addr is an enum of either Ip(SocketAddr) or Domain (String, u16)
-            dbg!(target_addr);
-
+            println!("Got new socks5 tcp conn to {target_addr}");
             //If the reply code indicates a success, and the
             //request was either a BIND or a CONNECT, the client may now start
             //passing data.

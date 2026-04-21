@@ -38,6 +38,8 @@ async fn start_server(
         .await
         .with_context(|| format!("Failed to bind to {}", server_addr))?;
 
+    println!("Started server on {server_addr}");
+
     let (stream, peer_addr) = tcp_listener.accept().await?;
 
     let mut stream = tls_acceptor.accept(stream).await?;
