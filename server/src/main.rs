@@ -1,11 +1,17 @@
 use anyhow::{Context, Result};
-use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
+use ftls_lib::proto::dest_header::DestinationHeader;
+use protobuf::Message;
+use tokio_rustls::{
+    rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject},
+    server::TlsStream,
+};
 
 use std::sync::Arc;
 
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt},
-    net::TcpListener,
+    io::{AsyncReadExt, copy, split},
+    net::{TcpListener, TcpStream},
+    select,
 };
 use tokio_rustls::{TlsAcceptor, rustls::ServerConfig};
 
@@ -42,14 +48,43 @@ async fn start_server(
 
     let (stream, peer_addr) = tcp_listener.accept().await?;
 
-    let mut stream = tls_acceptor.accept(stream).await?;
+    println!("Got connection from {peer_addr}");
 
-    let mut buf = String::new();
-    stream.read_line(&mut buf).await?;
+    let client_stream = tls_acceptor.accept(stream).await?;
 
-    println!("Got: {} from {}", buf, peer_addr);
-
-    stream.write_all(&b"Hello Client!"[..]).await?;
+    let _res = handle_connection(client_stream)
+        .await
+        .inspect_err(|e| eprintln!("failed to handle client connection err: {e}"));
 
     Ok(())
+}
+
+async fn handle_connection(mut client_stream: TlsStream<TcpStream>) -> Result<()> {
+    let sz_dst_header = client_stream.read_u64().await?;
+
+    let mut buf = vec![0u8; sz_dst_header as usize];
+    client_stream.read_exact(&mut buf).await?;
+
+    let dst_header =
+        DestinationHeader::parse_from_bytes(&buf).context("parse DestinationHeader from stream")?;
+
+    println!("{dst_header:?}");
+    assert!(!dst_header.addr.is_empty());
+
+    let (mut client_rx, mut client_tx) = split(client_stream);
+
+    let upstream = TcpStream::connect(dst_header.addr).await?;
+
+    let (mut upstream_rx, mut upstream_tx) = split(upstream);
+
+    loop {
+        select! {
+            r = copy(&mut client_rx, &mut upstream_tx) => {
+                r?;
+            }
+            r = copy(&mut upstream_rx, &mut client_tx) => {
+                    r?;
+            }
+        }
+    }
 }

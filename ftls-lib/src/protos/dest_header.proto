@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+enum DestinationType {
+  DOMAIN = 0;
+  IP = 1;
+}
+
+message DestinationHeader {
+  DestinationType type = 1;
+  string addr = 2;
+}

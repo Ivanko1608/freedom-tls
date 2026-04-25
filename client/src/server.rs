@@ -1,8 +1,12 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::sync::Arc;
 
+use anyhow::Context;
+use ftls_lib::proto::dest_header::DestinationHeader;
+use protobuf::Message;
 use tokio::{
-    io::{AsyncWriteExt, split},
+    io::{AsyncWriteExt, copy, split},
     net::TcpStream,
+    select,
 };
 use tokio_rustls::{
     TlsConnector,
@@ -26,22 +30,54 @@ impl Server {
         })
     }
 
-    pub async fn send(&self, mut client_stream: TcpStream) -> anyhow::Result<()> {
+    // TODO: ClientStream should be generic
+    pub async fn send(
+        &self,
+        dst_header: DestinationHeader,
+        client_stream: TcpStream,
+    ) -> anyhow::Result<()> {
         let connector = TlsConnector::from(self.client_config.clone());
+
+        println!(
+            "TCP: Attempting to connect to {}:{}",
+            self.domain, self.port
+        );
 
         let server_stream = TcpStream::connect((self.domain.as_ref(), self.port)).await?;
 
-        let stream = connector
+        println!("TCP: Connected to {}:{}", self.domain, self.port);
+
+        let upstream = connector
             // TODO: No clone pls?
             .connect(self.dns_name.clone(), server_stream)
             .await?;
 
-        let (reader, mut writer) = split(stream);
+        let (mut server_rx, mut server_tx) = split(upstream);
+        let (mut client_rx, mut client_tx) = split(client_stream);
 
-        let wrote = tokio::io::copy(&mut client_stream, &mut writer).await?;
+        server_tx.write_u64(dst_header.compute_size()).await?;
 
-        dbg!(wrote);
+        server_tx
+            .write_all(&dst_header.write_to_bytes()?)
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to write message header to server - mgs: {:?}",
+                    dst_header
+                )
+            })?;
 
-        Ok(())
+        // Pipe client to upstream then pipe upstream to client reader.
+
+        loop {
+            select! {
+                r = copy(&mut client_rx, &mut server_tx) => {
+                    r.unwrap();
+                }
+                r = copy(&mut server_rx, &mut client_tx) => {
+                        r.unwrap();
+                    }
+            }
+        }
     }
 }

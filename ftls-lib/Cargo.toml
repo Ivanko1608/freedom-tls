@@ -1,0 +1,10 @@
+[package]
+name = "ftls-lib"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+protobuf = { workspace = true }
+
+[build-dependencies]
+protobuf-codegen = "3.7.2"
