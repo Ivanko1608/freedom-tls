@@ -1,12 +1,16 @@
 use anyhow::{Context, Result};
+use clap::Parser;
 use ftls_lib::proto::dest_header::DestinationHeader;
 use protobuf::Message;
 use tokio_rustls::{
-    rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject},
+    rustls::{
+        RootCertStore,
+        pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject},
+    },
     server::TlsStream,
 };
 
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 use tokio::{
     io::{AsyncReadExt, copy, split},
@@ -15,13 +19,32 @@ use tokio::{
 };
 use tokio_rustls::{TlsAcceptor, rustls::ServerConfig};
 
+#[derive(Parser)]
+struct CliArgs {
+    /// .pem encoded public certificate.
+    #[arg(short, long)]
+    cert: PathBuf,
+
+    #[arg(short, long)]
+    key: PathBuf,
+
+    //TODO: make option<> use default if none
+    /// Address for server to bind to. Format: ip:port
+    #[arg(short, long)]
+    server_addr: String,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
-    // FIXME: No hardcoded paths!
-    let cert = CertificateDer::from_pem_file("/home/user/learning/ftls/config/server.pem")?;
-    let key = PrivateKeyDer::from_pem_file("/home/user/learning/ftls/config/server-key.pem")?;
+    let args = CliArgs::parse();
 
-    start_server("127.0.0.1:8443", cert, key)
+    let cert: Vec<_> = CertificateDer::pem_file_iter(args.cert)?
+        .map(|f| f.expect("invalid certificate in certs file"))
+        .collect();
+
+    let key = PrivateKeyDer::from_pem_file(args.key)?;
+
+    start_server(&args.server_addr, cert, key)
         .await
         .context("Failed to start server")?;
 
@@ -30,13 +53,12 @@ async fn main() -> Result<()> {
 
 async fn start_server(
     server_addr: &str,
-    pub_cert: CertificateDer<'static>,
+    certs: Vec<CertificateDer<'static>>,
     private_cert: PrivateKeyDer<'static>,
 ) -> Result<()> {
     let cfg = ServerConfig::builder()
         .with_no_client_auth()
-        // NOTE: Supposed to pass in root or signing CA certs here too?
-        .with_single_cert(vec![pub_cert], private_cert)?;
+        .with_single_cert(certs, private_cert)?;
 
     let tls_acceptor = TlsAcceptor::from(Arc::new(cfg));
 
@@ -46,17 +68,22 @@ async fn start_server(
 
     println!("Started server on {server_addr}");
 
-    let (stream, peer_addr) = tcp_listener.accept().await?;
+    loop {
+        let (stream, peer_addr) = tcp_listener.accept().await?;
 
-    println!("Got connection from {peer_addr}");
+        let client_stream = tls_acceptor
+            .accept(stream)
+            .await
+            .expect("failed to accept tls connection");
 
-    let client_stream = tls_acceptor.accept(stream).await?;
+        println!("Got connection from {peer_addr}");
 
-    let _res = handle_connection(client_stream)
-        .await
-        .inspect_err(|e| eprintln!("failed to handle client connection err: {e}"));
-
-    Ok(())
+        tokio::spawn(async move {
+            let _res = handle_connection(client_stream)
+                .await
+                .inspect_err(|e| eprintln!("failed to handle client connection err: {e}"));
+        });
+    }
 }
 
 async fn handle_connection(mut client_stream: TlsStream<TcpStream>) -> Result<()> {
