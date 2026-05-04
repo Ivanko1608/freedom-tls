@@ -61,12 +61,14 @@ pub fn target_addr_into_dest(ta: TargetAddr) -> DestinationHeader {
     match ta {
         TargetAddr::Domain(domain, port) => DestinationHeader {
             type_: DestinationType::DOMAIN.into(),
-            addr: format!("{domain}:{port}"),
+            addr: domain,
+            port: port as u32,
             ..Default::default()
         },
         TargetAddr::Ip(sa) => DestinationHeader {
             type_: DestinationType::IP.into(),
-            addr: sa.to_string(),
+            addr: sa.ip().to_string(),
+            port: sa.port() as u32,
             ..Default::default()
         },
     }

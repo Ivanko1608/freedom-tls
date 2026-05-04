@@ -72,11 +72,28 @@ impl Server {
         loop {
             select! {
                 r = copy(&mut client_rx, &mut server_tx) => {
-                    r.unwrap();
+
+                    match r {
+                        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                            eprintln!("got UnexpectedEof: {e}");
+                            return Ok(());
+                        },
+                        Err(e) => return Err(e.into()),
+                        Ok(_) => {}
+                    }
+
                 }
                 r = copy(&mut server_rx, &mut client_tx) => {
-                        r.unwrap();
+
+                    match r {
+                        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                            eprintln!("got UnexpectedEof: {e}");
+                            return Ok(());
+                        },
+                        Err(e) => return Err(e.into()),
+                        Ok(_) => {}
                     }
+                }
             }
         }
     }
