@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
-use anyhow::Context;
-use ftls_lib::proto::dest_header::DestinationHeader;
-use protobuf::Message;
+use anyhow::{Context, ensure};
+use ftls_lib::message::{Message, MessageType};
 use tokio::{
     io::{AsyncWriteExt, copy, split},
     net::TcpStream,
@@ -31,11 +30,7 @@ impl Server {
     }
 
     // TODO: ClientStream should be generic
-    pub async fn send(
-        &self,
-        dst_header: DestinationHeader,
-        client_stream: TcpStream,
-    ) -> anyhow::Result<()> {
+    pub async fn send(&self, message: Message, client_stream: TcpStream) -> anyhow::Result<()> {
         let connector = TlsConnector::from(self.client_config.clone());
 
         println!(
@@ -55,15 +50,15 @@ impl Server {
         let (mut server_rx, mut server_tx) = split(upstream);
         let (mut client_rx, mut client_tx) = split(client_stream);
 
-        server_tx.write_u64(dst_header.compute_size()).await?;
+        ensure!(matches!(message.message_type, MessageType::Destination(..)));
 
         server_tx
-            .write_all(&dst_header.write_to_bytes()?)
+            .write_all(&message.to_bytes()?)
             .await
             .with_context(|| {
                 format!(
                     "failed to write message header to server - mgs: {:?}",
-                    dst_header
+                    message
                 )
             })?;
 

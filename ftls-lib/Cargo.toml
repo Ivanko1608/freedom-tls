@@ -4,7 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-protobuf = { workspace = true }
-
-[build-dependencies]
-protobuf-codegen = "3.7.2"
+bytes = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tokio = { version = "1.52.0", features = ["net", "io-util"] }
+serde = { workspace = true }
+postcard = { workspace = true }

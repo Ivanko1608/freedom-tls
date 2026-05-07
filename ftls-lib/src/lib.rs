@@ -1,3 +1,3 @@
-pub mod proto {
-    include!(concat!(env!("OUT_DIR"), "/protos/mod.rs"));
-}
+pub mod flavor;
+pub mod message;
+pub mod reader_writer;

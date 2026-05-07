@@ -1,19 +1,20 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
 use clap::Parser;
-use ftls_lib::proto::dest_header::DestinationHeader;
-use protobuf::Message;
+use ftls_lib::{
+    flavor::MAGIC_HEADER,
+    message::{DestinationType, Message, MessageType},
+};
+use hickory_resolver::{Resolver, net::NetError};
 use tokio_rustls::{
-    rustls::{
-        RootCertStore,
-        pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject},
-    },
+    rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject},
     server::TlsStream,
 };
 
-use std::{path::PathBuf, sync::Arc};
+use core::panic;
+use std::{path::PathBuf, sync::Arc, vec};
 
 use tokio::{
-    io::{AsyncReadExt, copy, split},
+    io::{AsyncReadExt, AsyncWriteExt, copy, split},
     net::{TcpListener, TcpStream},
     select,
 };
@@ -87,31 +88,85 @@ async fn start_server(
 }
 
 async fn handle_connection(mut client_stream: TlsStream<TcpStream>) -> Result<()> {
-    let sz_dst_header = client_stream.read_u64().await?;
+    let mut header = vec![0u8; MAGIC_HEADER.len()];
+    client_stream.read_exact(&mut header).await?;
 
-    let mut buf = vec![0u8; sz_dst_header as usize];
+    ensure!(header == MAGIC_HEADER);
+
+    let len = client_stream.read_u64_le().await?;
+
+    let mut buf = vec![0u8; len as usize];
     client_stream.read_exact(&mut buf).await?;
 
-    let dst_header =
-        DestinationHeader::parse_from_bytes(&buf).context("parse DestinationHeader from stream")?;
+    let msg: Message = postcard::from_bytes(&buf).expect("parse DestinationHeader from stream");
 
-    println!("{dst_header:?}");
-    assert!(!dst_header.addr.is_empty());
+    let MessageType::Destination(dtype, addr, port) = msg.message_type else {
+        panic!("OOOps")
+    };
 
-    let (mut client_rx, mut client_tx) = split(client_stream);
+    println!("{dtype:?}:{addr}:{port}");
+    ensure!(!addr.is_empty());
 
-    let upstream = TcpStream::connect(dst_header.addr).await?;
+    if dtype == DestinationType::DOMAIN {
+        // Use the host OS'es `/etc/resolv.conf`
+        let resolver = Resolver::builder_tokio()?.build()?;
+        let response = match resolver.lookup_ip(&addr).await {
+            Ok(r) => Ok(r),
+            Err(NetError::Dns(hickory_resolver::net::DnsError::NoRecordsFound(e))) => {
+                let msg = Message::new(MessageType::Error(format!(
+                    "no records found for: {}",
+                    addr
+                )));
 
-    let (mut upstream_rx, mut upstream_tx) = split(upstream);
+                client_stream
+                    // The size of the vec we create here,  is the size of message (with service_message) + the size
+                    // of max dns name (roughly 253, 255 here for safety)
+                    .write_all(&postcard::to_stdvec(&msg)?)
+                    .await?;
+
+                client_stream.flush().await?;
+
+                client_stream.shutdown().await?;
+
+                return Err(hickory_resolver::net::DnsError::NoRecordsFound(e).into());
+            }
+            Err(e) => Err(e),
+        }?;
+
+        let Some(first_answer) = response.as_lookup().answers().first() else {
+            todo!()
+        };
+    }
+
+    let (mut client_rx, mut client_tx) = split(&mut client_stream);
+
+    let mut upstream = TcpStream::connect((addr, port)).await?;
+
+    let (mut upstream_rx, mut upstream_tx) = split(&mut upstream);
 
     loop {
         select! {
             r = copy(&mut client_rx, &mut upstream_tx) => {
-                r?;
+                if r.is_err() {
+                    break;
+                }
             }
             r = copy(&mut upstream_rx, &mut client_tx) => {
-                    r?;
+                if r.is_err() {
+                    break;
+                }
             }
         }
     }
+    // TODO: Ignore prev error shutdown next anyway;
+    let _ = upstream
+        .shutdown()
+        .await
+        .inspect_err(|e| eprintln!("failed to shutdown upstream connection: {e}"));
+    let _ = client_stream
+        .shutdown()
+        .await
+        .inspect_err(|e| eprintln!("failed to shutdown client_stream connection: {e}"));
+
+    Ok(())
 }

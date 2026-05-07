@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 
 use anyhow::Result;
 use fast_socks5::{Socks5Command, server::Socks5ServerProtocol, util::target_addr::TargetAddr};
-use ftls_lib::proto::dest_header::{DestinationHeader, DestinationType};
+use ftls_lib::message::{DestinationType, Message};
 use tokio::net::TcpStream;
 
 pub async fn handle_socks5(
@@ -56,20 +56,16 @@ pub async fn handle_socks5(
     }
 }
 
-// TODO: Naming.
-pub fn target_addr_into_dest(ta: TargetAddr) -> DestinationHeader {
+// FIXME: This should return a destination type message specifically!.
+pub fn target_addr_into_dest(ta: TargetAddr) -> Message {
     match ta {
-        TargetAddr::Domain(domain, port) => DestinationHeader {
-            type_: DestinationType::DOMAIN.into(),
-            addr: domain,
-            port: port as u32,
-            ..Default::default()
-        },
-        TargetAddr::Ip(sa) => DestinationHeader {
-            type_: DestinationType::IP.into(),
-            addr: sa.ip().to_string(),
-            port: sa.port() as u32,
-            ..Default::default()
-        },
+        TargetAddr::Domain(domain, port) => Message::new(
+            ftls_lib::message::MessageType::Destination(DestinationType::DOMAIN, domain, port),
+        ),
+        TargetAddr::Ip(sa) => Message::new(ftls_lib::message::MessageType::Destination(
+            DestinationType::IP,
+            sa.ip().to_string(),
+            sa.port(),
+        )),
     }
 }
