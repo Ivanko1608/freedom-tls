@@ -1,11 +1,10 @@
 use std::sync::Arc;
 
-use anyhow::{Context, ensure};
-use ftls_lib::message::{Message, MessageType};
+use anyhow::{Context, anyhow, ensure};
+use ftls_lib::message::Message;
 use tokio::{
-    io::{AsyncWriteExt, copy, split},
+    io::{AsyncWriteExt, copy_bidirectional},
     net::TcpStream,
-    select,
 };
 use tokio_rustls::{
     TlsConnector,
@@ -29,8 +28,8 @@ impl Server {
         })
     }
 
-    // TODO: ClientStream should be generic
-    pub async fn send(&self, message: Message, client_stream: TcpStream) -> anyhow::Result<()> {
+    // TODO: ClientStream should be generic && close conns properly if error.
+    pub async fn send(&self, message: Message, mut client_stream: TcpStream) -> anyhow::Result<()> {
         let connector = TlsConnector::from(self.client_config.clone());
 
         println!(
@@ -42,17 +41,22 @@ impl Server {
 
         println!("TCP: Connected to {}:{}", self.domain, self.port);
 
-        let upstream = connector
+        let mut upstream = connector
             // TODO: No clone pls?
             .connect(self.dns_name.clone(), server_stream)
             .await?;
 
-        let (mut server_rx, mut server_tx) = split(upstream);
-        let (mut client_rx, mut client_tx) = split(client_stream);
+        ensure!(matches!(message, Message::Destination(..)));
 
-        ensure!(matches!(message.message_type, MessageType::Destination(..)));
+        // TODO: Unhardcode version
+        let hello = Message::Hello { version: [0, 0, 1] };
 
-        server_tx
+        upstream
+            .write_all(&hello.to_bytes()?)
+            .await
+            .context("failed to write hello message to server")?;
+
+        upstream
             .write_all(&message.to_bytes()?)
             .await
             .with_context(|| {
@@ -62,34 +66,20 @@ impl Server {
                 )
             })?;
 
-        // Pipe client to upstream then pipe upstream to client reader.
+        let msg = Message::from_async_io(&mut upstream).await?;
 
-        loop {
-            select! {
-                r = copy(&mut client_rx, &mut server_tx) => {
-
-                    match r {
-                        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                            eprintln!("got UnexpectedEof: {e}");
-                            return Ok(());
-                        },
-                        Err(e) => return Err(e.into()),
-                        Ok(_) => {}
-                    }
-
-                }
-                r = copy(&mut server_rx, &mut client_tx) => {
-
-                    match r {
-                        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                            eprintln!("got UnexpectedEof: {e}");
-                            return Ok(());
-                        },
-                        Err(e) => return Err(e.into()),
-                        Ok(_) => {}
-                    }
-                }
+        match msg {
+            Message::Start => {
+                println!("Got start from server")
+            }
+            Message::Error(e) => return Err(anyhow!(e)),
+            m => {
+                return Err(anyhow!("Unexpected message after handshake: {m:?}"));
             }
         }
+
+        // Pipe client to upstream then pipe upstream to client reader.
+        copy_bidirectional(&mut upstream, &mut client_stream).await?;
+        Ok(())
     }
 }

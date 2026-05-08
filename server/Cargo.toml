@@ -27,6 +27,6 @@ hickory-resolver = { version = "0.26.0", features = [
 ] }
 serde = { workspace = true }
 postcard = { workspace = true }
-
+uuid = { version = "1.23.1", features = ["v4", "fast-rng"] }
 [dev-dependencies]
 rcgen = "0.14.7"

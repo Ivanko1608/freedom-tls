@@ -65,20 +65,22 @@ async fn main() -> Result<()> {
         match listener.accept().await {
             Ok((sock, client_addr)) => {
                 let server = server.clone();
+
                 tokio::spawn(async move {
                     let (dst_header, stream) = match handle_socks5(sock, client_addr).await {
                         Ok((ta, s)) => (target_addr_into_dest(ta), s),
                         Err(e) => {
                             eprintln!("failed to handle socks5 connection: {e}");
-                            return;
+                            return Err(e);
                         }
                     };
 
-                    // FIXME: temp unwrap
                     server
                         .send(dst_header, stream)
                         .await
-                        .expect("failed to communicate with server");
+                        .inspect_err(|e| eprintln!("failed to communicate with server: {e}"))?;
+
+                    Ok(())
                 });
             }
             Err(e) => {

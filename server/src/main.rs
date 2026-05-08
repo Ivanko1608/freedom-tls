@@ -1,24 +1,16 @@
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result};
 use clap::Parser;
-use ftls_lib::{
-    flavor::MAGIC_HEADER,
-    message::{DestinationType, Message, MessageType},
-};
-use hickory_resolver::{Resolver, net::NetError};
-use tokio_rustls::{
-    rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject},
-    server::TlsStream,
-};
+use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
 
-use core::panic;
-use std::{path::PathBuf, sync::Arc, vec};
+use std::{path::PathBuf, sync::Arc};
 
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt, copy, split},
-    net::{TcpListener, TcpStream},
-    select,
-};
+use tokio::net::TcpListener;
 use tokio_rustls::{TlsAcceptor, rustls::ServerConfig};
+
+use crate::client::Client;
+
+mod client;
+mod util;
 
 #[derive(Parser)]
 struct CliArgs {
@@ -72,7 +64,7 @@ async fn start_server(
     loop {
         let (stream, peer_addr) = tcp_listener.accept().await?;
 
-        let client_stream = tls_acceptor
+        let mut client_stream = tls_acceptor
             .accept(stream)
             .await
             .expect("failed to accept tls connection");
@@ -80,93 +72,16 @@ async fn start_server(
         println!("Got connection from {peer_addr}");
 
         tokio::spawn(async move {
-            let _res = handle_connection(client_stream)
+            let mut client = Client::try_from_handshake(&mut client_stream)
                 .await
-                .inspect_err(|e| eprintln!("failed to handle client connection err: {e}"));
+                .inspect_err(|e| eprintln!("failed to create client from handshake {e}"))?;
+
+            client
+                .handle()
+                .await
+                .inspect_err(|e| eprintln!("failed to handle client: {e}"))?;
+
+            Ok::<(), anyhow::Error>(())
         });
     }
-}
-
-async fn handle_connection(mut client_stream: TlsStream<TcpStream>) -> Result<()> {
-    let mut header = vec![0u8; MAGIC_HEADER.len()];
-    client_stream.read_exact(&mut header).await?;
-
-    ensure!(header == MAGIC_HEADER);
-
-    let len = client_stream.read_u64_le().await?;
-
-    let mut buf = vec![0u8; len as usize];
-    client_stream.read_exact(&mut buf).await?;
-
-    let msg: Message = postcard::from_bytes(&buf).expect("parse DestinationHeader from stream");
-
-    let MessageType::Destination(dtype, addr, port) = msg.message_type else {
-        panic!("OOOps")
-    };
-
-    println!("{dtype:?}:{addr}:{port}");
-    ensure!(!addr.is_empty());
-
-    if dtype == DestinationType::DOMAIN {
-        // Use the host OS'es `/etc/resolv.conf`
-        let resolver = Resolver::builder_tokio()?.build()?;
-        let response = match resolver.lookup_ip(&addr).await {
-            Ok(r) => Ok(r),
-            Err(NetError::Dns(hickory_resolver::net::DnsError::NoRecordsFound(e))) => {
-                let msg = Message::new(MessageType::Error(format!(
-                    "no records found for: {}",
-                    addr
-                )));
-
-                client_stream
-                    // The size of the vec we create here,  is the size of message (with service_message) + the size
-                    // of max dns name (roughly 253, 255 here for safety)
-                    .write_all(&postcard::to_stdvec(&msg)?)
-                    .await?;
-
-                client_stream.flush().await?;
-
-                client_stream.shutdown().await?;
-
-                return Err(hickory_resolver::net::DnsError::NoRecordsFound(e).into());
-            }
-            Err(e) => Err(e),
-        }?;
-
-        let Some(first_answer) = response.as_lookup().answers().first() else {
-            todo!()
-        };
-    }
-
-    let (mut client_rx, mut client_tx) = split(&mut client_stream);
-
-    let mut upstream = TcpStream::connect((addr, port)).await?;
-
-    let (mut upstream_rx, mut upstream_tx) = split(&mut upstream);
-
-    loop {
-        select! {
-            r = copy(&mut client_rx, &mut upstream_tx) => {
-                if r.is_err() {
-                    break;
-                }
-            }
-            r = copy(&mut upstream_rx, &mut client_tx) => {
-                if r.is_err() {
-                    break;
-                }
-            }
-        }
-    }
-    // TODO: Ignore prev error shutdown next anyway;
-    let _ = upstream
-        .shutdown()
-        .await
-        .inspect_err(|e| eprintln!("failed to shutdown upstream connection: {e}"));
-    let _ = client_stream
-        .shutdown()
-        .await
-        .inspect_err(|e| eprintln!("failed to shutdown client_stream connection: {e}"));
-
-    Ok(())
 }

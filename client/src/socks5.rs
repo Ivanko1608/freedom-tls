@@ -59,13 +59,14 @@ pub async fn handle_socks5(
 // FIXME: This should return a destination type message specifically!.
 pub fn target_addr_into_dest(ta: TargetAddr) -> Message {
     match ta {
-        TargetAddr::Domain(domain, port) => Message::new(
-            ftls_lib::message::MessageType::Destination(DestinationType::DOMAIN, domain, port),
-        ),
-        TargetAddr::Ip(sa) => Message::new(ftls_lib::message::MessageType::Destination(
+        TargetAddr::Domain(domain, port) => {
+            ftls_lib::message::Message::Destination(DestinationType::DOMAIN, domain, port)
+        }
+
+        TargetAddr::Ip(sa) => ftls_lib::message::Message::Destination(
             DestinationType::IP,
             sa.ip().to_string(),
             sa.port(),
-        )),
+        ),
     }
 }
