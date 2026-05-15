@@ -2,16 +2,42 @@ use std::net::SocketAddr;
 
 use anyhow::Result;
 use fast_socks5::{Socks5Command, server::Socks5ServerProtocol, util::target_addr::TargetAddr};
-use ftls_lib::message::{DestinationType, Message};
-use tokio::net::TcpStream;
+use ftls_lib::message::Message;
+use tokio::{
+    net::{TcpListener, TcpStream},
+    sync::mpsc::UnboundedSender,
+};
 
-pub async fn handle_socks5(
-    socket: TcpStream,
+pub async fn server_start(
+    ch: UnboundedSender<(Message, TcpStream)>,
+    addr: String,
+    port: u16,
+) -> Result<()> {
+    let listener = TcpListener::bind(format!("{}:{}", addr, port)).await?;
+
+    println!("Started socks5 server at: {}", listener.local_addr()?);
+
+    loop {
+        let (stream, client_addr) = listener.accept().await?;
+
+        let socks_conn = Socks5ServerProtocol::accept_no_auth(stream).await?;
+
+        let ch = ch.clone();
+        tokio::spawn(async move {
+            let (ta, stream) = handle_socks5(socks_conn, client_addr)
+                .await
+                .expect("failed to handle socks5 connection: {e}");
+            let msg = util::target_addr_into_dest(ta);
+            ch.send((msg, stream))
+        });
+    }
+}
+
+async fn handle_socks5(
+    conn: Socks5ServerProtocol<TcpStream, fast_socks5::server::states::Authenticated>,
     client_addr: SocketAddr,
 ) -> Result<(TargetAddr, TcpStream)> {
-    let socks_conn = Socks5ServerProtocol::accept_no_auth(socket).await?;
-
-    let (stream, cmd, target_addr) = socks_conn.read_command().await?;
+    let (stream, cmd, target_addr) = conn.read_command().await?;
 
     match cmd {
         Socks5Command::TCPConnect => {
@@ -56,17 +82,21 @@ pub async fn handle_socks5(
     }
 }
 
-// FIXME: This should return a destination type message specifically!.
-pub fn target_addr_into_dest(ta: TargetAddr) -> Message {
-    match ta {
-        TargetAddr::Domain(domain, port) => {
-            ftls_lib::message::Message::Destination(DestinationType::DOMAIN, domain, port)
-        }
+mod util {
+    use fast_socks5::util::target_addr::TargetAddr;
+    use ftls_lib::message::{DestinationType, Message};
 
-        TargetAddr::Ip(sa) => ftls_lib::message::Message::Destination(
-            DestinationType::IP,
-            sa.ip().to_string(),
-            sa.port(),
-        ),
+    pub fn target_addr_into_dest(ta: TargetAddr) -> Message {
+        match ta {
+            TargetAddr::Domain(domain, port) => {
+                ftls_lib::message::Message::Destination(DestinationType::DOMAIN, domain, port)
+            }
+
+            TargetAddr::Ip(sa) => ftls_lib::message::Message::Destination(
+                DestinationType::IP,
+                sa.ip().to_string(),
+                sa.port(),
+            ),
+        }
     }
 }

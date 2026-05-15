@@ -2,16 +2,14 @@ use std::{path::PathBuf, sync::Arc};
 
 use anyhow::Result;
 use clap::Parser;
-use tokio::net::TcpListener;
+use ftls_lib::message::Message;
+use tokio::{net::TcpStream, sync::mpsc};
 use tokio_rustls::rustls::{
     ClientConfig, RootCertStore,
     pki_types::{CertificateDer, pem::PemObject},
 };
 
-use crate::{
-    server::Server,
-    socks5::{handle_socks5, target_addr_into_dest},
-};
+use crate::server::Server;
 
 mod server;
 mod socks5;
@@ -40,10 +38,6 @@ struct CliArgs {
 async fn main() -> Result<()> {
     let args = CliArgs::parse();
 
-    let listener = TcpListener::bind(format!("127.0.0.1:{}", args.port)).await?;
-
-    println!("Started socks5 server at: {}", listener.local_addr()?);
-
     let mut root_cert_store = RootCertStore::empty();
     root_cert_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
 
@@ -61,30 +55,29 @@ async fn main() -> Result<()> {
         config,
     )?);
 
+    let (ch_send, mut ch_recv) = mpsc::unbounded_channel::<(Message, TcpStream)>();
+
+    tokio::spawn(socks5::server_start(
+        ch_send,
+        "127.0.0.1".to_string(),
+        args.port,
+    ));
+
     loop {
-        match listener.accept().await {
-            Ok((sock, client_addr)) => {
+        match ch_recv.recv().await {
+            Some((message, stream)) => {
                 let server = server.clone();
 
                 tokio::spawn(async move {
-                    let (dst_header, stream) = match handle_socks5(sock, client_addr).await {
-                        Ok((ta, s)) => (target_addr_into_dest(ta), s),
-                        Err(e) => {
-                            eprintln!("failed to handle socks5 connection: {e}");
-                            return Err(e);
-                        }
-                    };
-
                     server
-                        .send(dst_header, stream)
+                        .send(message, stream)
                         .await
-                        .inspect_err(|e| eprintln!("failed to communicate with server: {e}"))?;
-
-                    Ok(())
+                        .inspect_err(|e| eprintln!("failed to send to server: {e}"))
+                        .unwrap();
                 });
             }
-            Err(e) => {
-                eprintln!("failed to accept incoming connection: {e}");
+            None => {
+                todo!()
             }
         }
     }

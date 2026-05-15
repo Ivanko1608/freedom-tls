@@ -16,13 +16,16 @@ tokio = { version = "1.52.0", features = [
   "macros",
   "rt-multi-thread",
   "time",
+  "sync",
 ] }
 tokio-rustls = "0.26.4"
-anyhow = { workspace = true }
-thiserror = { workspace = true }
+tun = { version = "0.8.9", features = ["async"] }
 webpki-roots = "1.0.7"
 fast-socks5 = "1.0.0"
 clap = { version = "4.6.1", features = ["derive"] }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
 postcard = { workspace = true }
+
 [dev-dependencies]
 rcgen = "0.14.7"
