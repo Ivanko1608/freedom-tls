@@ -8,8 +8,10 @@ use tokio::{
     sync::mpsc::UnboundedSender,
 };
 
+use crate::types::ProxySender;
+
 pub async fn server_start(
-    ch: UnboundedSender<(Message, TcpStream)>,
+    ch: UnboundedSender<(Message, Box<dyn ProxySender>)>,
     addr: String,
     port: u16,
 ) -> Result<()> {
@@ -28,7 +30,7 @@ pub async fn server_start(
                 .await
                 .expect("failed to handle socks5 connection: {e}");
             let msg = util::target_addr_into_dest(ta);
-            ch.send((msg, stream))
+            ch.send((msg, Box::new(stream)))
         });
     }
 }

@@ -3,16 +3,17 @@ use std::{path::PathBuf, sync::Arc};
 use anyhow::Result;
 use clap::Parser;
 use ftls_lib::message::Message;
-use tokio::{net::TcpStream, sync::mpsc};
+use tokio::sync::mpsc;
 use tokio_rustls::rustls::{
     ClientConfig, RootCertStore,
     pki_types::{CertificateDer, pem::PemObject},
 };
 
-use crate::server::Server;
-
 mod server;
 mod socks5;
+mod types;
+
+use crate::{server::Server, types::ProxySender};
 
 #[derive(Parser)]
 struct CliArgs {
@@ -55,7 +56,7 @@ async fn main() -> Result<()> {
         config,
     )?);
 
-    let (ch_send, mut ch_recv) = mpsc::unbounded_channel::<(Message, TcpStream)>();
+    let (ch_send, mut ch_recv) = mpsc::unbounded_channel::<(Message, Box<dyn ProxySender>)>();
 
     tokio::spawn(socks5::server_start(
         ch_send,

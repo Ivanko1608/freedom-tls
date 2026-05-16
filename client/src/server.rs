@@ -11,6 +11,8 @@ use tokio_rustls::{
     rustls::{ClientConfig, pki_types::ServerName},
 };
 
+use crate::types::ProxySender;
+
 pub struct Server {
     domain: String,
     port: u16,
@@ -29,7 +31,11 @@ impl Server {
     }
 
     // TODO: ClientStream should be generic && close conns properly if error.
-    pub async fn send(&self, message: Message, mut client_stream: TcpStream) -> anyhow::Result<()> {
+    pub async fn send(
+        &self,
+        message: Message,
+        mut client_stream: Box<dyn ProxySender>,
+    ) -> anyhow::Result<()> {
         let connector = TlsConnector::from(self.client_config.clone());
 
         println!(
