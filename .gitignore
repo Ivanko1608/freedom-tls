@@ -1,2 +1,4 @@
 target/
 config/
+tests/logs/
+tests/certs/*.pem

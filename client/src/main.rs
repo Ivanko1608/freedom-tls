@@ -2,18 +2,21 @@ use std::{path::PathBuf, sync::Arc};
 
 use anyhow::Result;
 use clap::Parser;
-use ftls_lib::message::Message;
-use tokio::sync::mpsc;
+use tokio::try_join;
 use tokio_rustls::rustls::{
     ClientConfig, RootCertStore,
     pki_types::{CertificateDer, pem::PemObject},
 };
+use tracing::error;
+use tracing_forest::ForestLayer;
+use tracing_subscriber::{EnvFilter, Registry, layer::SubscriberExt, util::SubscriberInitExt};
 
 mod server;
 mod socks5;
+mod tun;
 mod types;
 
-use crate::{server::Server, types::ProxySender};
+use crate::{server::Server, socks5::Socks5Server, tun::Tun, types::ProxySender};
 
 #[derive(Parser)]
 struct CliArgs {
@@ -37,6 +40,11 @@ struct CliArgs {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    Registry::default()
+        .with(EnvFilter::from_default_env())
+        .with(ForestLayer::default())
+        .init();
+
     let args = CliArgs::parse();
 
     let mut root_cert_store = RootCertStore::empty();
@@ -56,30 +64,27 @@ async fn main() -> Result<()> {
         config,
     )?);
 
-    let (ch_send, mut ch_recv) = mpsc::unbounded_channel::<(Message, Box<dyn ProxySender>)>();
+    let s = server.clone();
+    let h_socks5 = async move {
+        let socks5 = Socks5Server::new(s, "127.0.0.1".to_string(), args.port);
+        socks5.server_start().await?;
 
-    tokio::spawn(socks5::server_start(
-        ch_send,
-        "127.0.0.1".to_string(),
-        args.port,
-    ));
+        Ok::<(), anyhow::Error>(())
+    };
 
-    loop {
-        match ch_recv.recv().await {
-            Some((message, stream)) => {
-                let server = server.clone();
+    let tun = Tun {
+        server: server.clone(),
+        addr: (10, 8, 0, 2),
+        netmask: (255, 255, 255, 0),
+        mtu: 1400,
+    };
 
-                tokio::spawn(async move {
-                    server
-                        .send(message, stream)
-                        .await
-                        .inspect_err(|e| eprintln!("failed to send to server: {e}"))
-                        .unwrap();
-                });
-            }
-            None => {
-                todo!()
-            }
-        }
+    let h_tun = tun.server_start();
+
+    if let Err(e) = try_join!(h_socks5, h_tun) {
+        error!(?e, "Fatal server error:");
+        return Err(e);
     }
+
+    Ok(())
 }

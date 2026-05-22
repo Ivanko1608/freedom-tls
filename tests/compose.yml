@@ -1,0 +1,148 @@
+# Local container test bed for the VPN.
+#
+#   vpn-net (10.10.0.0/24)  : client <-> server  ("internet" leg)
+#   exit-net (10.20.0.0/24) : server <-> target  ("remote LAN", internal)
+#   wan-net (10.30.0.0/24)  : server <-> host bridge -> real internet
+#
+# Client has NO direct route to exit-net or wan-net. The only way a packet
+# from client reaches anything beyond vpn-net is through the TUN tunnel +
+# server's MASQUERADE. If `curl 10.20.0.50` from client succeeds, the tunnel
+# is carrying IP to the isolated target; if `curl https://api.ipify.org`
+# from client succeeds, the tunnel is carrying IP all the way to the real
+# internet (with DNS tunneled too when FORCE_DNS=1 on the client).
+name: ftls-test
+
+networks:
+  vpn-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.10.0.0/24
+  exit-net:
+    driver: bridge
+    internal: true            # no host/internet bridge; isolates target
+    ipam:
+      config:
+        - subnet: 10.20.0.0/24
+  wan-net:
+    driver: bridge            # NOT internal — this is the server's uplink
+    ipam:
+      config:
+        - subnet: 10.30.0.0/24
+
+services:
+  vpn-server:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: ftls:test
+    container_name: ftls-vpn-server
+    hostname: vpn-server
+    # NET_ADMIN: needed to create the TUN device, set routes, run iptables.
+    # /dev/net/tun: the tun crate opens this node directly.
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun
+    # ip_forward=1: kernel must forward packets between tun0 and exit-net.
+    sysctls:
+      net.ipv4.ip_forward: "1"
+    environment:
+      # vpn-net.sh installs a source-only MASQUERADE on $VPN_SUBNET, so
+      # decap'd VPN traffic gets NAT'd whichever iface it exits via —
+      # exit-net for the test target, wan-net for real internet. No need
+      # to pin EXT_IFACE/EXT_SUBNET.
+      VPN_SUBNET: "10.8.0.0/24"
+      RUST_LOG: "${RUST_LOG:-ftls_server=trace,ftls_lib=trace,info}"
+      RUST_BACKTRACE: "1"
+    volumes:
+      - ./certs:/etc/ftls:ro,Z
+    networks:
+      vpn-net:
+        ipv4_address: 10.10.0.10
+      exit-net:
+        ipv4_address: 10.20.0.10
+      wan-net:
+        ipv4_address: 10.30.0.10
+    # Run host-style init first, then exec the server.
+    # -e: abort on any failure. -x: trace each command so podman logs
+    # show exactly what ran (and where it failed) without needing the
+    # caller to remember to look at script stderr separately.
+    command:
+      - bash
+      - -exc
+      - |
+        /usr/local/sbin/vpn-net.sh up
+        exec ftls-server \
+          --cert        /etc/ftls/server.pem \
+          --key         /etc/ftls/server-key.pem \
+          --server-addr 0.0.0.0:8443
+    # bash's /dev/tcp probe succeeds only after ftls-server is accept()-ing.
+    # Used by vpn-client's `service_healthy` gate so the client never races
+    # the server's TLS listener.
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8443"]
+      interval: 1s
+      timeout: 2s
+      retries: 60
+      start_period: 2s
+
+  vpn-client:
+    image: ftls:test
+    container_name: ftls-vpn-client
+    # Same capability/device set as server: client also creates a TUN.
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun
+    environment:
+      # vpn-client-net.sh: pin the server's address through the real
+      # gateway, then hijack 0.0.0.0/1 + 128.0.0.0/1 into tun0. Wait for
+      # tun0 since the Rust client creates it concurrently with this
+      # command.
+      SERVER_IP: "10.10.0.10"
+      TUN_WAIT_SECS: "10"
+      # Replace /etc/resolv.conf inside the container so DNS goes to a
+      # public resolver; combined with the /1 default-route hijack above,
+      # the resolver lookups themselves travel through the tunnel.
+      FORCE_DNS: "1"
+      DNS_SERVER: "1.1.1.1"
+      RUST_LOG: "${RUST_LOG:-ftls_client=trace,ftls_lib=trace,info}"
+      RUST_BACKTRACE: "1"
+    volumes:
+      - ./certs:/etc/ftls:ro,Z
+    depends_on:
+      vpn-server:
+        # Block client startup until the server's healthcheck passes —
+        # otherwise ftls-client races the TLS listener and dies with
+        # ECONNREFUSED.
+        condition: service_healthy
+    networks:
+      vpn-net:
+        ipv4_address: 10.10.0.20
+    # Start the route installer in the background (it blocks until tun0
+    # appears) and exec the client so it becomes PID 1. `-x` traces each
+    # statement so the installer call is visible in podman logs; an
+    # outer-wrapped subshell echoes its exit status so a silent failure
+    # in the background process can't hide from compose logs.
+    command:
+      - bash
+      - -exc
+      - |
+        { /usr/local/sbin/vpn-client-net.sh up \
+            || echo "[compose] vpn-client-net.sh FAILED ($?)" >&2; } &
+        exec ftls-client \
+          --port          1080 \
+          --server-cert   /etc/ftls/server.pem \
+          --server-domain vpn-server \
+          --server-port   8443
+
+  target:
+    image: python:3-alpine
+    container_name: ftls-target
+    command: ["python", "-m", "http.server", "80", "--directory", "/srv"]
+    volumes:
+      - ./target-www:/srv:ro
+    networks:
+      exit-net:
+        ipv4_address: 10.20.0.50

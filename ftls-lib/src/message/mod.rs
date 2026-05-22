@@ -9,15 +9,24 @@ use crate::flavor::{deserialize, serialize::FtlsSeFlavor};
 pub const MAGIC_HEADER: [u8; 4] = *b"FTLS";
 
 #[derive(Serialize, Deserialize, Eq, PartialEq, Debug)]
-pub enum DestinationType {
+pub enum Transport {
+    IP,
+    SOCKS,
+}
+
+#[derive(Serialize, Deserialize, Eq, PartialEq, Debug)]
+pub enum AddressType {
     DOMAIN,
     IP,
 }
 
 #[derive(Serialize, Deserialize, Eq, PartialEq, Debug)]
 pub enum Message {
-    Hello { version: [u8; 3] },
-    Destination(DestinationType, String, u16),
+    Hello {
+        version: [u8; 3],
+        transport: Transport,
+    },
+    Destination(AddressType, String, u16),
     Start,
     Error(String),
 }
@@ -65,7 +74,7 @@ pub enum MessageParsingError {
     #[error("provided u8: {0} does not correspond to a valid destination type")]
     InvalidDestinationType(u8),
 
-    #[error("invalide message header bytes: {0:?}")]
+    #[error("invalid message header bytes: {0:?}")]
     InvalidHeader(Vec<u8>),
 
     #[error("couldn't get length from message header")]

@@ -1,18 +1,15 @@
 use std::sync::Arc;
 
-use anyhow::{Context, anyhow, ensure};
+use anyhow::{Context, Result, anyhow};
 use ftls_lib::message::Message;
-use tokio::{
-    io::{AsyncWriteExt, copy_bidirectional},
-    net::TcpStream,
-};
+use tokio::{io::AsyncWriteExt, net::TcpStream};
 use tokio_rustls::{
-    TlsConnector,
+    TlsConnector, client,
     rustls::{ClientConfig, pki_types::ServerName},
 };
+use tracing::{debug, instrument, trace};
 
-use crate::types::ProxySender;
-
+#[derive(Debug)]
 pub struct Server {
     domain: String,
     port: u16,
@@ -30,12 +27,7 @@ impl Server {
         })
     }
 
-    // TODO: ClientStream should be generic && close conns properly if error.
-    pub async fn send(
-        &self,
-        message: Message,
-        mut client_stream: Box<dyn ProxySender>,
-    ) -> anyhow::Result<()> {
+    pub async fn connect(&self) -> Result<client::TlsStream<TcpStream>> {
         let connector = TlsConnector::from(self.client_config.clone());
 
         println!(
@@ -47,45 +39,33 @@ impl Server {
 
         println!("TCP: Connected to {}:{}", self.domain, self.port);
 
-        let mut upstream = connector
+        Ok(connector
             // TODO: No clone pls?
             .connect(self.dns_name.clone(), server_stream)
-            .await?;
+            .await?)
+    }
 
-        ensure!(matches!(message, Message::Destination(..)));
-
-        // TODO: Unhardcode version
-        let hello = Message::Hello { version: [0, 0, 1] };
-
-        upstream
-            .write_all(&hello.to_bytes()?)
-            .await
-            .context("failed to write hello message to server")?;
-
-        upstream
-            .write_all(&message.to_bytes()?)
-            .await
-            .with_context(|| {
-                format!(
-                    "failed to write message header to server - mgs: {:?}",
-                    message
-                )
+    #[instrument]
+    pub async fn handshake(
+        messages: Vec<Message>,
+        mut stream: client::TlsStream<TcpStream>,
+    ) -> Result<client::TlsStream<TcpStream>> {
+        for msg in messages {
+            trace!(message = ?msg, "writing message to stream");
+            stream.write_all(&msg.to_bytes()?).await.with_context(|| {
+                format!("failed to write message header to server - msg: {:?}", msg)
             })?;
+        }
 
-        let msg = Message::from_async_io(&mut upstream).await?;
+        let msg = Message::from_async_io(&mut stream).await?;
 
         match msg {
             Message::Start => {
-                println!("Got start from server")
+                debug!("Got start message from server");
+                Ok(stream)
             }
             Message::Error(e) => return Err(anyhow!(e)),
-            m => {
-                return Err(anyhow!("Unexpected message after handshake: {m:?}"));
-            }
+            m => return Err(anyhow!("Unexpected message after handshake: {m:?}")),
         }
-
-        // Pipe client to upstream then pipe upstream to client reader.
-        copy_bidirectional(&mut upstream, &mut client_stream).await?;
-        Ok(())
     }
 }

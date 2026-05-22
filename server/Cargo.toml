@@ -9,24 +9,32 @@ path = "src/main.rs"
 
 
 [dependencies]
+anyhow = { workspace = true }
+tun = { workspace = true }
+serde = { workspace = true }
+postcard = { workspace = true }
+tracing = { workspace = true }
+tokio-util = { workspace = true }
+futures = { workspace = true }
 ftls-lib = { path = "../ftls-lib" }
+tracing-subscriber = "0.3.23"
 tokio = { version = "1.52.0", features = [
   "net",
   "io-util",
   "macros",
   "rt-multi-thread",
   "time",
+  "fs",
 ] }
 tokio-rustls = "0.26.4"
-anyhow = { workspace = true }
 webpki-roots = "1.0.7"
 fast-socks5 = "1.0.0"
 clap = { version = "4.6.1", features = ["derive"] }
 hickory-resolver = { version = "0.26.0", features = [
   "rustls-platform-verifier",
 ] }
-serde = { workspace = true }
-postcard = { workspace = true }
 uuid = { version = "1.23.1", features = ["v4", "fast-rng"] }
+tracing-forest = { version = "0.3.1", features = ["full"] }
+
 [dev-dependencies]
 rcgen = "0.14.7"

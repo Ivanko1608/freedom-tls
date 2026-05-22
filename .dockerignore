@@ -1,0 +1,9 @@
+# Keep build context lean. We now build inside the image, so source IS shipped,
+# but target/ and VCS/editor noise are not.
+target
+.git
+.gitignore
+*.md
+config
+tests/certs
+tests/target-www
