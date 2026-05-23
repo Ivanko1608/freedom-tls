@@ -9,7 +9,7 @@ use tokio::{
 };
 use tracing::{debug, info, instrument};
 
-use crate::{server::Server, types::ProxySender};
+use crate::{server::Server, types::ProxySender, util::get_client_version};
 
 #[derive(Debug)]
 pub struct Socks5Server {
@@ -38,9 +38,8 @@ impl ProxySender for Socks5Server {
 
                 let upstream = server.connect().await.expect("failed to connect to server");
 
-                // TODO: Unhardcode version
                 let hello = Message::Hello {
-                    version: [0, 0, 1],
+                    version: get_client_version().expect("failed to get client_version"),
                     transport: ftls_lib::message::Transport::SOCKS,
                 };
                 let dst = util::target_addr_into_dest(ta);

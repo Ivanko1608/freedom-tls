@@ -7,7 +7,7 @@ use tokio_util::codec::{Framed, LengthDelimitedCodec};
 use tracing::{Level, error, info, instrument, span, trace};
 use tun::AsyncDevice;
 
-use crate::{server::Server, types::ProxySender};
+use crate::{server::Server, types::ProxySender, util::get_client_version};
 
 #[derive(Debug)]
 pub(super) struct Tun {
@@ -22,9 +22,8 @@ impl ProxySender for Tun {
     async fn server_start(self) -> anyhow::Result<()> {
         let (mut tun_writer, mut tun_reader) = self.bootstrap_tun()?.split()?;
 
-        // TODO: No version hardcode
         let msg = Message::Hello {
-            version: [0, 0, 1],
+            version: get_client_version()?,
             transport: Transport::IP,
         };
 

@@ -15,6 +15,7 @@ mod server;
 mod socks5;
 mod tun;
 mod types;
+mod util;
 
 use crate::{server::Server, socks5::Socks5Server, tun::Tun, types::ProxySender};
 
