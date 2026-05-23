@@ -141,12 +141,11 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Debug + Send + 'static> Client<T> {
             Framed::new(self.client_stream, LengthDelimitedCodec::new()).split();
 
         tokio::spawn(async move {
+            span!(
+                Level::DEBUG,
+                "Reading framed packets from client_stream into tun"
+            );
             loop {
-                span!(
-                    Level::DEBUG,
-                    "Reading framed packets from client_stream into tun"
-                );
-
                 let read_bytes = match client_reader.next().await {
                     Some(Ok(buf)) => buf,
                     Some(Err(e)) => {
@@ -175,12 +174,11 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Debug + Send + 'static> Client<T> {
         });
 
         tokio::spawn(async move {
+            span!(
+                Level::DEBUG,
+                "Starting to read from tun into the client_stream"
+            );
             loop {
-                span!(
-                    Level::DEBUG,
-                    "Starting to read from tun into the client_stream"
-                );
-
                 let mut buf = [0; 4096];
                 match tun_read.read(&mut buf).await {
                     Ok(n_bytes) if n_bytes == 0 => {

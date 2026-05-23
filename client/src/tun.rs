@@ -5,6 +5,7 @@ use futures::{SinkExt, StreamExt};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 use tracing::{Level, error, info, instrument, span, trace};
+use tun::AsyncDevice;
 
 use crate::{server::Server, types::ProxySender};
 
@@ -19,19 +20,7 @@ pub(super) struct Tun {
 impl ProxySender for Tun {
     #[instrument(level = "trace")]
     async fn server_start(self) -> anyhow::Result<()> {
-        let mut cfg = tun::Configuration::default();
-
-        #[cfg(target_os = "linux")]
-        cfg.platform_config(|pc| {
-            pc.ensure_root_privileges(true);
-        });
-
-        cfg.address(self.addr)
-            .netmask(self.netmask)
-            .mtu(self.mtu)
-            .up();
-
-        let (mut tun_writer, mut tun_reader) = tun::create_as_async(&cfg)?.split()?;
+        let (mut tun_writer, mut tun_reader) = self.bootstrap_tun()?.split()?;
 
         // TODO: No version hardcode
         let msg = Message::Hello {
@@ -80,5 +69,22 @@ impl ProxySender for Tun {
         });
 
         Ok(())
+    }
+}
+impl Tun {
+    fn bootstrap_tun(&self) -> Result<AsyncDevice, tun::Error> {
+        let mut cfg = tun::Configuration::default();
+
+        #[cfg(target_os = "linux")]
+        cfg.platform_config(|pc| {
+            pc.ensure_root_privileges(true);
+        });
+
+        cfg.address(self.addr)
+            .netmask(self.netmask)
+            .mtu(self.mtu)
+            .up();
+
+        tun::create_as_async(&cfg)
     }
 }

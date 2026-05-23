@@ -15,6 +15,6 @@ pub(crate) mod dns {
             Err(e) => return Err(e.into()),
         };
 
-        Ok(response.iter().filter(|i| i.is_ipv4()).next())
+        Ok(response.iter().find(|i| i.is_ipv4()))
     }
 }
