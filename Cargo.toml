@@ -2,6 +2,9 @@
 resolver = "3"
 members = ["client", "server", "ftls-lib"]
 
+[workspace.package]
+license = "MIT"
+
 [workspace.dependencies]
 bytes = "1.11.1"
 thiserror = "2.0.18"
