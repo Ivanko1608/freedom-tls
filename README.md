@@ -1,6 +1,11 @@
 # freedom-tls
 
-A Rust VPN-ish thing built for the **Compiles Eventually** devlog series.
+**A VPN written in Rust: TLS tunnel, SOCKS5 proxy and TUN interface, built with tokio and rustls.**
+
+[![CI](https://github.com/Ivanko1608/freedom-tls/actions/workflows/ci.yml/badge.svg)](https://github.com/Ivanko1608/freedom-tls/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+Built for the **Compiles Eventually** devlog series: [watch the full playlist](https://www.youtube.com/playlist?list=PL5KHCLK_1CdeKeiIv00NKXlORxW6qD8NN) or [subscribe on YouTube](https://www.youtube.com/@CompilesEventually).
 
 It started as a TLS-encrypted SOCKS5 tunnel. Then I tried protobuf, threw that away, rebuilt the protocol with `postcard`, and eventually added a TUN interface so the thing could move raw IP packets instead of just proxying application traffic.
 
@@ -328,7 +333,7 @@ Also, the code was written while recording long-form devlogs, which means some p
 
 ## Series context
 
-This repo belongs to the Rust VPN devlog series on **Compiles Eventually**.
+This repo belongs to the Rust VPN devlog series on [**Compiles Eventually**](https://www.youtube.com/@CompilesEventually). Full playlist: [watch here](https://www.youtube.com/playlist?list=PL5KHCLK_1CdeKeiIv00NKXlORxW6qD8NN).
 
 Rough arc:
 
